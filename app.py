@@ -70,6 +70,38 @@ if search_mode == "Single Stock Analysis":
 else:
     st.sidebar.subheader("📊 Filter Parameters")
     
+    # Ticker Selection
+    st.sidebar.write("**📋 Ticker Selection**")
+    ticker_source = st.sidebar.radio(
+        "Ticker Source",
+        ["Default List", "Upload Custom List"],
+        help="Choose to use default tickers or upload your own list"
+    )
+    
+    if ticker_source == "Upload Custom List":
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload ticker list (txt file, one ticker per line)",
+            type=['txt'],
+            help="Upload a text file with one ticker symbol per line"
+        )
+        if uploaded_file is not None:
+            try:
+                content = uploaded_file.read().decode('utf-8')
+                custom_tickers = [line.strip().upper() for line in content.split('\n') if line.strip() and not line.strip().startswith('#')]
+                st.sidebar.success(f"✅ Loaded {len(custom_tickers)} tickers from file")
+                tickers_to_screen = custom_tickers
+            except Exception as e:
+                st.sidebar.error(f"❌ Error reading file: {str(e)}")
+                tickers_to_screen = load_tickers_from_file()
+        else:
+            st.sidebar.info("👆 Please upload a ticker list file")
+            tickers_to_screen = load_tickers_from_file()
+    else:
+        tickers_to_screen = load_tickers_from_file()
+        st.sidebar.info(f"📊 Using {len(tickers_to_screen)} default tickers")
+    
+    st.sidebar.markdown("---")
+    
     # Filter Selection
     filter_options = ["PER", "PBR", "ROE", "RSI", "MACD", "Market Cap", "Sector"]
     default_filters = ["PER", "PBR", "ROE", "RSI"]
@@ -129,30 +161,56 @@ else:
     
     period = "1y"  # Default period for screener
 
-# Stock Screener Function
+# Helper function to load tickers from file
 @st.cache_data
-def screen_stocks(filters):
-    # Popular US stocks to screen (you can expand this list)
-    popular_tickers = [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B", "V", "JNJ",
-        "WMT", "JPM", "MA", "PG", "UNH", "HD", "DIS", "BAC", "ADBE", "CRM",
-        "NFLX", "CSCO", "PFE", "KO", "PEP", "INTC", "CMCSA", "VZ", "T", "MRK",
-        "ABT", "NKE", "TMO", "COST", "AVGO", "ACN", "DHR", "TXN", "NEE", "LIN",
-        "AMD", "QCOM", "UPS", "PM", "HON", "UNP", "RTX", "SBUX", "LOW", "IBM"
-    ]
+def load_tickers_from_file(file_path="tickers.txt"):
+    """Load ticker symbols from a text file."""
+    try:
+        with open(file_path, 'r') as f:
+            tickers = [line.strip().upper() for line in f if line.strip() and not line.strip().startswith('#')]
+        return tickers
+    except FileNotFoundError:
+        st.warning(f"⚠️ Ticker file '{file_path}' not found. Using default tickers.")
+        # Fallback to default tickers
+        return [
+            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B", "V", "JNJ",
+            "WMT", "JPM", "MA", "PG", "UNH", "HD", "DIS", "BAC", "ADBE", "CRM",
+            "NFLX", "CSCO", "PFE", "KO", "PEP", "INTC", "CMCSA", "VZ", "T", "MRK",
+            "ABT", "NKE", "TMO", "COST", "AVGO", "ACN", "DHR", "TXN", "NEE", "LIN",
+            "AMD", "QCOM", "UPS", "PM", "HON", "UNP", "RTX", "SBUX", "LOW", "IBM"
+        ]
+    except Exception as e:
+        st.error(f"❌ Error loading ticker file: {str(e)}")
+        return []
+
+# Stock Screener Function with improved error handling
+@st.cache_data
+def screen_stocks(filters, tickers_list):
+    """
+    Screen stocks based on filters.
     
+    Args:
+        filters (dict): Dictionary of filter criteria
+        tickers_list (list): List of ticker symbols to screen
+    
+    Returns:
+        pd.DataFrame: DataFrame containing filtered stock data
+    """
     results = []
+    errors = []
     progress_bar = st.progress(0)
     status_text = st.empty()
+    error_container = st.empty()
     
-    for idx, ticker in enumerate(popular_tickers):
+    for idx, ticker in enumerate(tickers_list):
         try:
-            status_text.text(f"Screening {ticker}... ({idx+1}/{len(popular_tickers)})")
+            status_text.text(f"Screening {ticker}... ({idx+1}/{len(tickers_list)})")
             stock = yf.Ticker(ticker)
             info = stock.info
             hist = stock.history(period="6mo") # Need enough data for MACD (26+9 days)
             
             if hist.empty:
+                errors.append(f"{ticker}: No historical data available")
                 continue
             
             # Get metrics
@@ -161,7 +219,11 @@ def screen_stocks(filters):
             roe = info.get('returnOnEquity')
             market_cap = info.get('marketCap')
             sector = info.get('sector', '')
-            current_price = info.get('currentPrice', hist['Close'].iloc[-1])
+            current_price = info.get('currentPrice', hist['Close'].iloc[-1] if not hist.empty else None)
+            
+            if current_price is None:
+                errors.append(f"{ticker}: Unable to fetch current price")
+                continue
             
             # Calculate RSI
             delta = hist['Close'].diff()
@@ -231,13 +293,25 @@ def screen_stocks(filters):
                 "Sector": sector
             })
             
+        except KeyError as e:
+            errors.append(f"{ticker}: Missing data field - {str(e)}")
+        except ValueError as e:
+            errors.append(f"{ticker}: Invalid data value - {str(e)}")
         except Exception as e:
-            continue
+            errors.append(f"{ticker}: {type(e).__name__} - {str(e)}")
         
-        progress_bar.progress((idx + 1) / len(popular_tickers))
+        progress_bar.progress((idx + 1) / len(tickers_list))
     
     progress_bar.empty()
     status_text.empty()
+    
+    # Display errors if any
+    if errors:
+        with error_container.expander(f"⚠️ {len(errors)} errors occurred during screening", expanded=False):
+            for error in errors[:10]:  # Show first 10 errors
+                st.text(error)
+            if len(errors) > 10:
+                st.text(f"... and {len(errors) - 10} more errors")
     
     return pd.DataFrame(results)
 
@@ -264,7 +338,7 @@ if search_mode == "Stock Screener":
     
     if search_button:
         st.subheader("Filtered Stocks")
-        results_df = screen_stocks(filters)
+        results_df = screen_stocks(filters, tickers_to_screen)
         st.session_state.screener_results = results_df
         st.session_state.selected_ticker_from_screener = None  # Reset selection on new search
         
