@@ -7,6 +7,57 @@ from datetime import datetime, timedelta
 # Page Config
 st.set_page_config(page_title="US Stock Analysis App", layout="wide")
 
+# ========================================
+# Password Authentication
+# ========================================
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == st.secrets["passwords"]["app_password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    # First run, show input for password
+    if "password_correct" not in st.session_state:
+        st.markdown("# 🔒 US Stock Analysis App")
+        st.markdown("### Please enter the password to access the application")
+        st.text_input(
+            "Password", 
+            type="password", 
+            on_change=password_entered, 
+            key="password"
+        )
+        st.info("💡 To change the password, edit the `.streamlit/secrets.toml` file")
+        return False
+    # Password not correct, show input + error
+    elif not st.session_state["password_correct"]:
+        st.markdown("# 🔒 US Stock Analysis App")
+        st.markdown("### Please enter the password to access the application")
+        st.text_input(
+            "Password", 
+            type="password", 
+            on_change=password_entered, 
+            key="password"
+        )
+        st.error("😕 Password incorrect. Please try again.")
+        st.info("💡 To change the password, edit the `.streamlit/secrets.toml` file")
+        return False
+    else:
+        # Password correct
+        return True
+
+# Check password before showing the app
+if not check_password():
+    st.stop()  # Do not continue if check_password is not True
+
+# ========================================
+# Main Application (Only shown after authentication)
+# ========================================
+
 # Sidebar
 st.sidebar.header("🔍 Stock Search")
 
